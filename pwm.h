@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <utility>
 #include <stdint.h>
 #include <arduino.h>
@@ -10,8 +11,13 @@ namespace WS2812B {
 	static constexpr float T1H = 0.8e-6f;  // duration [sec] of "1 code, high voltage"
 	static constexpr float T0L = 0.85e-6f; // duration [sec] of "0 code, low voltage"
 	static constexpr float T1L = 0.45e-6f; // duration [sec] of "1 code, low voltage"
-	static constexpr float TRES = 0.5e-6f;  // duration [sec] of "reset code (low voltage)"
+	static constexpr float T_ERROR = 150e-9f; // duration [sec] which {T0H, T1H, T0L, T1L} can deviate by.
+	static constexpr float T_RES = 0.5e-6f;  // duration [sec] of "reset code (low voltage)"
 
+	[[nodiscard]]
+	static constexpr bool check_duration(float required, float tested) {
+		return tested >= (required - T_ERROR) && tested <= (required + T_ERROR);
+	}
 
 	struct Color {
 		uint8_t r;
@@ -113,12 +119,22 @@ namespace WS2812B {
 				t_0_H = T0H / tick_duration_seconds,
 				t_1_L = T1L / tick_duration_seconds,
 				t_1_H = T1H / tick_duration_seconds,
-				t_res = TRES / tick_duration_seconds;
+				t_res = T_RES / tick_duration_seconds;
 
-			// todo better check according to the datasheets duty-cycle's error
-			if (!t_0_L || !t_0_H || !t_1_L || !t_1_H || !t_res) {
-				return false;
-			}
+			// TODO this is not tested
+			if (!check_duration(T0L, t_0_L * tick_duration_seconds))
+				if (!check_duration(T0L, ++t_0_L * tick_duration_seconds))
+					return false;
+			if (!check_duration(T0H, t_0_H * tick_duration_seconds))
+				if (!check_duration(T0H, ++t_0_H * tick_duration_seconds))
+					return false;
+			if (!check_duration(T1L, t_1_L * tick_duration_seconds))
+				if (!check_duration(T1L, ++t_1_L * tick_duration_seconds))
+					return false;
+			if (!check_duration(T1H, t_1_H * tick_duration_seconds))
+				if (!check_duration(T1H, ++t_1_H * tick_duration_seconds))
+					return false;
+			if (t_res * tick_duration_seconds < T_RES) ++t_res;
 
 			set_active(false);
 
