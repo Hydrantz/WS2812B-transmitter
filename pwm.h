@@ -105,10 +105,10 @@ namespace WS2812B {
 		/// @return false if the configuration failed because the tick_duration was to long 
 		bool configure(int pin, float tick_duration_seconds) {
 			uint32_t
-				t_0_H = T0H / tick_duration_seconds,
 				t_0_L = T0L / tick_duration_seconds,
-				t_1_H = T1H / tick_duration_seconds,
+				t_0_H = T0H / tick_duration_seconds,
 				t_1_L = T1L / tick_duration_seconds,
+				t_1_H = T1H / tick_duration_seconds,
 				t_res = TRES / tick_duration_seconds;
 
 			// todo better check
@@ -118,10 +118,10 @@ namespace WS2812B {
 
 			set_active(false);
 
-			set_ticks_required_0_H(t_0_H);
 			set_ticks_required_0_L(t_0_L);
-			set_ticks_required_1_H(t_1_H);
+			set_ticks_required_0_H(t_0_H);
 			set_ticks_required_1_L(t_1_L);
+			set_ticks_required_1_H(t_1_H);
 			set_ticks_required_RES(t_res);
 
 			pinMode(pin = pin, OUTPUT);
@@ -141,7 +141,7 @@ namespace WS2812B {
 				set_active(false);
 				return TickResult::Finished;
 			}
-			if (--current_tick_counter = 0) {
+			if (--current_tick_counter == 0) {
 				if (current_output_level == false) { // finished transmitting the bit
 					increase_iterators(); // increase the data iterators
 					if (is_done()) {
@@ -214,19 +214,19 @@ namespace WS2812B {
 
 		void write_to_port() const { digitalWrite(pin, current_output_level); }
 
-		void set_ticks_required_0_H(uint32_t ticks) { tick_counts[0] = ticks; } // number of ticks for transmitting '0', High voltage level
-		void set_ticks_required_0_L(uint32_t ticks) { tick_counts[1] = ticks; } // number of ticks for transmitting '0', Low voltage level
-		void set_ticks_required_1_H(uint32_t ticks) { tick_counts[2] = ticks; } // number of ticks for transmitting '1', High voltage level
-		void set_ticks_required_1_L(uint32_t ticks) { tick_counts[3] = ticks; } // number of ticks for transmitting '1', Low voltage level
+		void set_ticks_required_0_L(uint32_t ticks) { tick_counts[0] = ticks; } // number of ticks for transmitting '0', Low voltage level
+		void set_ticks_required_0_H(uint32_t ticks) { tick_counts[1] = ticks; } // number of ticks for transmitting '0', High voltage level
+		void set_ticks_required_1_L(uint32_t ticks) { tick_counts[2] = ticks; } // number of ticks for transmitting '1', Low voltage level
+		void set_ticks_required_1_H(uint32_t ticks) { tick_counts[3] = ticks; } // number of ticks for transmitting '1', High voltage level
 		void set_ticks_required_RES(uint32_t ticks) { tick_counts[4] = ticks; } // number of ticks for transmitting a reset signal
 
 		void read_bit() { current_bit_value = (data_iterator->as_32_bit() >> bit_index) & 1; }
 
-		void update_tick_counter() { current_tick_counter = tick_counts[current_bit_value * 2 + current_output_level]; }
+		void update_tick_counter() { current_tick_counter = tick_counts[(uint8_t)current_bit_value * 2 + current_output_level]; }
 
 	 private: // Fields
 		// Configurations:
-		uint32_t tick_counts[5] = {}; // { 0H, 0L, 1H, 1L, RESET }
+		uint32_t tick_counts[5] = {}; // { 0L, 0H, 1L, 1H, RESET }
 		int pin; // hardware output port
 		ColorBuffer buffer = {nullptr, nullptr}; // TODO default constrcut
 
