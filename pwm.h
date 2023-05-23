@@ -1,15 +1,16 @@
 #pragma once
 
+#include <utility>
 #include <stdint.h>
 #include <arduino.h>
 
 namespace WS2812B {
 	// Data Transfer Time [units: seconds]
-	static constexpr float T0H = 0.4e-6f;  // 0 code, high voltage time
-	static constexpr float T1H = 0.8e-6f;  // 1 code, high voltage time
-	static constexpr float T0L = 0.85e-6f; // 0 code, low voltage time
-	static constexpr float T1L = 0.45e-6f; // 1 code, low voltage time
-	static constexpr float TRES = 0.5e-6f;  // low voltage time
+	static constexpr float T0H = 0.4e-6f;  // duration [sec] of "0 code, high voltage"
+	static constexpr float T1H = 0.8e-6f;  // duration [sec] of "1 code, high voltage"
+	static constexpr float T0L = 0.85e-6f; // duration [sec] of "0 code, low voltage"
+	static constexpr float T1L = 0.45e-6f; // duration [sec] of "1 code, low voltage"
+	static constexpr float TRES = 0.5e-6f;  // duration [sec] of "reset code (low voltage)"
 
 
 	struct Color {
@@ -18,7 +19,7 @@ namespace WS2812B {
 		uint8_t b;
 
 		/// @return uint32_t with complemented 0s where alpha would be in RGBA
-		uint32_t as_32_bit() const {
+		uint32_t into_32_bit() const {
 			union {
 				uint32_t num;
 				Color color;
@@ -40,10 +41,10 @@ namespace WS2812B {
 
 		/// @brief Makes the color more vivid?
 		void normalize() {
-			const auto max = std::max(r, std::max(g, b));
-			r = ((uint16_t)r * 255) / max;
-			g = ((uint16_t)g * 255) / max;
-			b = ((uint16_t)b * 255) / max;
+			const auto m = max(r, max(g, b));
+			r = ((uint16_t)r * 255) / m;
+			g = ((uint16_t)g * 255) / m;
+			b = ((uint16_t)b * 255) / m;
 		}
 	};
 
@@ -54,46 +55,49 @@ namespace WS2812B {
 	};
 
 	struct ColorBuffer {
-		Color* start = nullptr, end = nullptr;
+		Color* start = nullptr;
+		Color* end = nullptr;
 	};
 
 	/// @brief class to encode RGB data and modulate it using the PWM protocol of the WS2812B
 	/// @example
+	/// #include "pwm.h"
 	/// bool flag_finished_transmission = false;
-	/// WS2812B::Transmitter pwm_tx;
+	/// WS2812B::Transmitter tx;
 	///
 	/// void main() {
-	/// 	constexpr int pwm_pin; // insert some output pin number here
+	/// 	constexpr int tx_pin; // insert some output pin number here
 	/// 	constexpr float time_between_interrupts = 1.0 / 16e6;
 	///
-	/// 	if (!pwm_tx.configure(pwm_pin, time_between_interrupts)) {
+	/// 	if (!tx.configure(tx_pin, time_between_interrupts)) {
 	/// 		// time_between_interrupts is too big and the modulation won't work...
 	/// 		// break the program
 	/// 	}
 	///
-	/// 	Color *data = new Color[5];
+	/// 	auto data = new WS2812B::Color[5];
 	/// 	// initiate the data here...
-	/// 	pwm_tx.feed({data, data+5});
-	/// 	pwm_tx.set_active(true); // must manually activate or it won't start
+	/// 	tx.feed({data, data+5});
+	/// 	tx.set_active(true); // must manually activate or it won't start
 	///
 	/// 	for(;;) {
 	/// 		if (flag_finished_transmission) {
 	/// 			flag_finished_transmission = false;
-	/// 			pwm_tx.restart_transmission();
-	/// 			pwm_tx.set_active(true);
+	/// 			tx.restart_transmission();
+	/// 			tx.set_active(true);
 	/// 		}
 	/// 	}
 	/// }
 	///
 	/// // this function is pseudocode for an interrupt routine
 	/// void timer_ISR() {
-	/// 	if (pwm_tx.tick() == WS2812B::TickResult::Finished)
+	/// 	if (tx.tick() == WS2812B::TickResult::Finished) {
 	/// 		flag_finished_transmission = true;
 	/// 	}
 	/// }
 	class Transmitter {
 	 public:
 		Transmitter() : buffer() {
+			set_active(false);
 			// TODO
 		}
 
@@ -111,8 +115,8 @@ namespace WS2812B {
 				t_1_H = T1H / tick_duration_seconds,
 				t_res = TRES / tick_duration_seconds;
 
-			// todo better check
-			if (!ticks_required_0_H || !ticks_required_0_L || !ticks_required_1_H || !ticks_required_1_L || !t_res) {
+			// todo better check according to the datasheets duty-cycle's error
+			if (!t_0_L || !t_0_H || !t_1_L || !t_1_H || !t_res) {
 				return false;
 			}
 
@@ -158,7 +162,7 @@ namespace WS2812B {
 		}
 
 		[[nodiscard]]
-		bool is_active() const {} { return enable; }
+		bool is_active() const { return enable; }
 		void set_active(bool enable) { this->enable = enable; }
 
 		void restart_transmission() {
@@ -175,11 +179,11 @@ namespace WS2812B {
 		/// @brief give a buffer to be coded and modulated via this entity
 		/// @returns the previous buffer
 		[[nodiscard]]
-		ColorBuffer&& feed(ColorBuffer &&buffer) {
+		ColorBuffer feed(ColorBuffer &&buffer) {
 			set_active(false);
 			auto ret = std::exchange(this->buffer, std::move(buffer));
 			restart_transmission();
-			return ret;
+			return std::move(ret);
 		}
 
 		auto get_pin_number() const { return pin; }
@@ -203,7 +207,7 @@ namespace WS2812B {
 
 		/// @returns true if transmission of all data is finished
 		[[nodiscard]]
-		bool is_done() const { return is_active() && data_iterator == buffer.end; }
+		bool is_done() const { return data_iterator == buffer.end; }
 
 		void increase_iterators() {
 			if (++bit_index == 24) { // DO NOT change to ">= 24" because of restart_transmission() which enables transmission of first bit
@@ -220,9 +224,16 @@ namespace WS2812B {
 		void set_ticks_required_1_H(uint32_t ticks) { tick_counts[3] = ticks; } // number of ticks for transmitting '1', High voltage level
 		void set_ticks_required_RES(uint32_t ticks) { tick_counts[4] = ticks; } // number of ticks for transmitting a reset signal
 
-		void read_bit() { current_bit_value = (data_iterator->as_32_bit() >> bit_index) & 1; }
+		void read_bit() { current_bit_value = (process_rgb(*data_iterator) >> bit_index) & 1; }
 
 		void update_tick_counter() { current_tick_counter = tick_counts[(uint8_t)current_bit_value * 2 + current_output_level]; }
+
+		/// @brief Utility for converting RGB into GRB according to the protocol, then into 32 bit.
+		[[nodiscard]]
+		static uint32_t process_rgb(Color c) {
+			std::swap(c.r, c.g);
+			return c.into_32_bit();
+		}
 
 	 private: // Fields
 		// Configurations:
