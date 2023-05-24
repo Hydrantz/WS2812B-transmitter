@@ -55,7 +55,6 @@ namespace WS2812B {
 	};
 
 	enum class TickResult {
-		Disabled,
 		Ok,
 		Finished
 	};
@@ -80,16 +79,17 @@ namespace WS2812B {
 	/// 		// break the program
 	/// 	}
 	///
-	/// 	auto data = new WS2812B::Color[5];
+	///		const int len = 5;
+	/// 	auto data = new WS2812B::Color[len];
 	/// 	// initiate the data here...
-	/// 	tx.feed({data, data+5});
-	/// 	tx.set_active(true); // must manually activate or it won't start
+	/// 	tx.feed({data, data+len});
+	/// 	tx.start(); // must manually activate or it won't start
 	///
 	/// 	for(;;) {
 	/// 		if (flag_finished_transmission) {
 	/// 			flag_finished_transmission = false;
-	/// 			tx.restart_transmission();
-	/// 			tx.set_active(true);
+	/// 			tx.asynch_reset();
+	/// 			tx.start();
 	/// 		}
 	/// 	}
 	/// }
@@ -103,7 +103,6 @@ namespace WS2812B {
 	class Transmitter {
 	 public:
 		Transmitter() : buffer() {
-			set_active(false);
 			// TODO
 		}
 
@@ -136,17 +135,16 @@ namespace WS2812B {
 					return false;
 			if (t_res * tick_duration_seconds < T_RES) ++t_res;
 
-			set_active(false);
+			set_ticks_required_RES(t_res);
+			asynch_reset();
 
 			set_ticks_required_0_L(t_0_L);
 			set_ticks_required_0_H(t_0_H);
 			set_ticks_required_1_L(t_1_L);
 			set_ticks_required_1_H(t_1_H);
-			set_ticks_required_RES(t_res);
 
 			pinMode(pin = pin, OUTPUT);
 
-			restart_transmission();
 			return true;
 		}
 
@@ -155,51 +153,50 @@ namespace WS2812B {
 		/// @returns false if finished transmission 
 		[[nodiscard]]
 		TickResult tick() {
-			// safety measures
-			if (!is_active()) return TickResult::Disabled;
-			if (is_done()) {
-				set_active(false);
-				return TickResult::Finished;
-			}
-			if (--current_tick_counter == 0) {
-				if (current_output_level == false) { // finished transmitting the bit
-					increase_iterators(); // increase the data iterators
-					if (is_done()) {
-						set_active(false);
-						return TickResult::Finished;
+			if (++tick_counter == ticks_required) {
+				if (!flag_resetting) {
+					if (current_output_level == false) { // finished transmitting the bit
+						increase_iterators(); // increase the data iterators
+						if (is_done()) {
+							start_reset();
+							flag_start = false;
+							return TickResult::Finished;
+						}
+						read_bit(); // get next data bit
 					}
-					read_bit(); // get next data bit
+					current_output_level = !current_output_level; // change output level
+					write_to_port(); // update the output port
+					update_tick_required();
+					return TickResult::Ok;
 				}
-				current_output_level = !current_output_level; // change output level
-				write_to_port(); // update the output port
-				update_tick_counter();
+				// here, flag_resetting is true
+				if (flag_start) {
+					start_data();
+					return tick();
+				}
 			}
 			return TickResult::Ok;
 		}
 
-		[[nodiscard]]
-		bool is_active() const { return enable; }
-		void set_active(bool enable) { this->enable = enable; }
-
-		void restart_transmission() {
-			set_active(false);
-
-			data_iterator = buffer.start;
-
-			// the next three lines make sure that the first bit is sent properly on the next tick
-			current_tick_counter = 1;
-			current_output_level = false; // as if a bit had just finished transmitting
-			bit_index = -1;
-		}
 
 		/// @brief give a buffer to be coded and modulated via this entity
 		/// @returns the previous buffer
 		[[nodiscard]]
 		ColorBuffer feed(ColorBuffer &&buffer) {
-			set_active(false);
 			auto ret = std::exchange(this->buffer, std::move(buffer));
-			restart_transmission();
+			asynch_reset();
 			return std::move(ret);
+		}
+
+		void start() { flag_start = true; }
+
+		void asynch_reset() {
+			if (!flag_resetting) {
+				start_reset();
+				if (current_output_level) {
+					tick_counter = -1; // because called asynchronously, must compensate with +1 tick
+				}
+			}
 		}
 
 		auto get_pin_number() const { return pin; }
@@ -220,6 +217,27 @@ namespace WS2812B {
 		[[nodiscard]] uint32_t _get_ticks_required_RES() const { return tick_counts[4]; };
 
 	 private: // Private Methods
+
+		void start_reset() {
+			flag_resetting = true;
+			if (current_output_level) {
+				current_output_level = false;
+				write_to_port();
+				tick_counter = 0;
+			} else {
+				// only extend the current counter, rather than restart it to save time
+				tick_counter -= _get_ticks_required_RES() - ticks_required;
+			}
+			ticks_required = _get_ticks_required_RES();
+		}
+
+		void start_data() {
+			flag_resetting = false;
+			ticks_required = 1;
+			tick_counter = 0;
+			bit_index == 23;
+			data_iterator = buffer.start - 1;
+		}
 
 		/// @returns true if transmission of all data is finished
 		[[nodiscard]]
@@ -242,7 +260,7 @@ namespace WS2812B {
 
 		void read_bit() { current_bit_value = (process_rgb(*data_iterator) >> bit_index) & 1; }
 
-		void update_tick_counter() { current_tick_counter = tick_counts[(uint8_t)current_bit_value * 2 + current_output_level]; }
+		void update_tick_required() { ticks_required = tick_counts[(uint8_t)current_bit_value * 2 + current_output_level]; }
 
 		/// @brief Utility for converting RGB into GRB according to the protocol, then into 32 bit.
 		[[nodiscard]]
@@ -257,11 +275,12 @@ namespace WS2812B {
 		int pin; // hardware output port
 		ColorBuffer buffer = {nullptr, nullptr}; // TODO default constrcut
 
-		bool enable = false;
-		bool flag_reset_occured; // TODO ?
-		uint32_t current_tick_counter = 0; // current counter of ticks until next change of pwm stage
+		bool flag_start = false; // if true, when a reset signal is done, will stard sending data
+		bool flag_resetting = false; // true if the transmitting a reset signal
 		bool current_bit_value = false; // the bit currently being transmitted
 		bool current_output_level = false; // 0 for low, 1 for high
+		uint32_t tick_counter = 0; // current counter of ticks until next change of pwm stage
+		uint32_t ticks_required; // when tick_counter reaches this, it resets
 		uint8_t bit_index = -1; // iterator over bits
 		const Color *data_iterator = nullptr; // iterator over each color item
 	};
