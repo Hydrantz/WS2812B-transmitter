@@ -93,14 +93,6 @@ namespace WS2812B {
 	/// }
 	class Transmitter {
 	 public:
-		enum class Flag: uint8_t {
-			output_level = 1, // 0 for low, 1 for high
-			data_bit = 2,     // the bit currently being transmitted
-			resetting = 4,    // true if the transmitting a reset signal
-			start = 8         // if true, when a reset signal is done, will stard sending data
-		};
-
-	 public:
 		Transmitter() : buffer() {
 			// TODO
 		}
@@ -153,23 +145,23 @@ namespace WS2812B {
 		[[nodiscard]]
 		TickResult tick() {
 			if (++tick_counter == ticks_required) {
-				if (!_get_flag(Flag::resetting)) {
-					if (!_get_flag(Flag::output_level)) { // finished transmitting the bit
+				if (!flag_resetting) {
+					if (current_output_level == false) { // finished transmitting the bit
 						increase_iterators(); // increase the data iterators
 						if (is_done()) {
 							start_reset();
-							reset_flag(Flag::start);
+							flag_start = false;
 							return TickResult::Finished;
 						}
-						read_data_bit(); // get next data bit
+						read_bit(); // get next data bit
 					}
-					flip_flag(Flag::output_level);// change output level
+					current_output_level = !current_output_level; // change output level
 					write_to_port(); // update the output port
 					update_tick_required();
 					return TickResult::Ok;
 				}
-				// here, Flag::resetting is 1
-				if (_get_flag(Flag::start)) {
+				// here, flag_resetting is true
+				if (flag_start) {
 					start_data();
 					return tick();
 				}
@@ -187,12 +179,12 @@ namespace WS2812B {
 			return std::move(ret);
 		}
 
-		void start() { set_flag(Flag::start); }
+		void start() { flag_start = true; }
 
 		void asynch_reset() {
-			if (!_get_flag(Flag::resetting)) {
+			if (!flag_resetting) {
 				start_reset();
-				if (_get_flag(Flag::output_level)) {
+				if (current_output_level) {
 					tick_counter = -1; // because called asynchronously, must compensate with +1 tick
 				}
 			}
@@ -215,15 +207,12 @@ namespace WS2812B {
 		/// @returns number of ticks for transmitting a reset signal
 		[[nodiscard]] uint32_t _get_ticks_required_RES() const { return tick_counts[4]; };
 
-		[[nodiscard]]
-		bool _get_flag(Flag option) const { return flags & (uint8_t)option; }
-
 	 private: // Private Methods
 
 		void start_reset() {
-			set_flag(Flag::resetting);
-			if (_get_flag(Flag::output_level)) {
-				reset_flag(Flag::output_level);
+			flag_resetting = true;
+			if (current_output_level) {
+				current_output_level = false;
 				write_to_port();
 				tick_counter = 0;
 			} else {
@@ -234,7 +223,7 @@ namespace WS2812B {
 		}
 
 		void start_data() {
-			reset_flag(Flag::resetting);
+			flag_resetting = false;
 			ticks_required = 1;
 			tick_counter = 0;
 			bit_index == 23;
@@ -252,7 +241,7 @@ namespace WS2812B {
 			}
 		}
 
-		void write_to_port() const { digitalWrite(pin, _get_flag(Flag::output_level)); }
+		void write_to_port() const { digitalWrite(pin, current_output_level); }
 
 		void set_ticks_required_0_L(uint32_t ticks) { tick_counts[0] = ticks; } // number of ticks for transmitting '0', Low voltage level
 		void set_ticks_required_0_H(uint32_t ticks) { tick_counts[1] = ticks; } // number of ticks for transmitting '0', High voltage level
@@ -260,11 +249,9 @@ namespace WS2812B {
 		void set_ticks_required_1_H(uint32_t ticks) { tick_counts[3] = ticks; } // number of ticks for transmitting '1', High voltage level
 		void set_ticks_required_RES(uint32_t ticks) { tick_counts[4] = ticks; } // number of ticks for transmitting a reset signal
 
-		void read_data_bit() {
-			write_flag(Flag::data_bit, (process_rgb(*data_iterator) >> bit_index) & 1);
-		}
+		void read_bit() { current_bit_value = (process_rgb(*data_iterator) >> bit_index) & 1; }
 
-		void update_tick_required() { ticks_required = tick_counts[get_tick_counts_index()]; }
+		void update_tick_required() { ticks_required = tick_counts[(uint8_t)current_bit_value * 2 + current_output_level]; }
 
 		/// @brief Utility for converting RGB into GRB according to the protocol, then into 32 bit.
 		[[nodiscard]]
@@ -273,30 +260,19 @@ namespace WS2812B {
 			return c.into_32_bit();
 		}
 
-
-		void write_flag(Flag option, bool value) {
-			if (value) {set_flag(option);} else {reset_flag(option);}
-		}
-
-		void set_flag(Flag option) { flags |= (uint8_t)option; }
-
-		void reset_flag(Flag option) { flags &= ~(uint8_t)option; }
-
-		void flip_flag(Flag option) { flags ^= (uint8_t)option; }
-
-		[[nodiscard]]
-		uint8_t get_tick_counts_index() const { return flags & 3; }
-
 	 private: // Fields
 		// Configurations:
 		uint32_t tick_counts[5] = {}; // { 0L, 0H, 1L, 1H, RESET }
 		int pin; // hardware output port
 		ColorBuffer buffer = {nullptr, nullptr}; // TODO default constrcut
 
-		const Color *data_iterator = nullptr; // iterator over each color item
+		bool flag_start = false; // if true, when a reset signal is done, will stard sending data
+		bool flag_resetting = false; // true if the transmitting a reset signal
+		bool current_bit_value = false; // the bit currently being transmitted
+		bool current_output_level = false; // 0 for low, 1 for high
 		uint32_t tick_counter = 0; // current counter of ticks until next change of pwm stage
 		uint32_t ticks_required; // when tick_counter reaches this, it resets
 		uint8_t bit_index = -1; // iterator over bits
-		uint8_t flags = 0; // all booleans compressed into 1 byte. Ordered by the enumerations of "enum class Flag"
+		const Color *data_iterator = nullptr; // iterator over each color item
 	};
 }
