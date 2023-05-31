@@ -12,7 +12,7 @@ namespace WS2812B {
 	static constexpr float T0L = 0.85e-6f; // duration [sec] of "0 code, low voltage"
 	static constexpr float T1L = 0.45e-6f; // duration [sec] of "1 code, low voltage"
 	static constexpr float T_ERROR = 150e-9f; // duration [sec] which {T0H, T1H, T0L, T1L} can deviate by.
-	static constexpr float T_RES = 0.5e-6f;  // duration [sec] of "reset code (low voltage)"
+	static constexpr float T_RES = 50e-6f;  // duration [sec] of "reset code (low voltage)"
 
 	[[nodiscard]]
 	static constexpr bool check_duration(float required, float tested) {
