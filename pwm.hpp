@@ -149,6 +149,7 @@ namespace WS2812B {
 		TickResult tick() {
 			if (is_locked()) return TickResult::Locked;
 			if (++tick_counter == ticks_required) {
+				write_to_port(); // update the output port
 				if (!flag_resetting) {
 					if (current_output_level == false) { // finished transmitting the bit
 						increase_iterators(); // increase the data iterators
@@ -160,7 +161,6 @@ namespace WS2812B {
 						read_bit(); // get next data bit
 					}
 					current_output_level = !current_output_level; // change output level
-					write_to_port(); // update the output port
 					update_tick_required();
 					return TickResult::Ok;
 				}
@@ -239,8 +239,9 @@ namespace WS2812B {
 			flag_resetting = false;
 			ticks_required = 1;
 			tick_counter = 0;
-			bit_index == 23;
-			data_iterator = buffer.start - 1;
+			bit_index == 0;
+			data_iterator = buffer.start;
+			read_bit();
 		}
 
 		/// @returns true if transmission of all data is finished
