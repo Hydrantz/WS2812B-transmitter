@@ -20,9 +20,7 @@ namespace WS2812B {
 	}
 
 	struct Color {
-		uint8_t r;
-		uint8_t g;
-		uint8_t b;
+		uint8_t r, g, b;
 
 		/// @return uint32_t with complemented 0s where alpha would be in RGBA
 		uint32_t into_32_bit() const {
@@ -38,19 +36,12 @@ namespace WS2812B {
 		}
 
 		/// @brief Modifies the brightness
-		/// @param brightness 0 is completely dark, 255 is not modified
-		void dim(uint8_t brightness) {
-			r = ((uint16_t)r * brightness) / 255;
-			g = ((uint16_t)g * brightness) / 255;
-			b = ((uint16_t)b * brightness) / 255;
-		}
-
-		/// @brief Makes the color more vivid?
-		void normalize() {
+		/// @param brightness 0 is black, 255 fully bright. Greater than 255 is undefined behaviour.
+		void set_brightness(uint8_t brightness) {
 			const auto m = max(r, max(g, b));
-			r = ((uint16_t)r * 255) / m;
-			g = ((uint16_t)g * 255) / m;
-			b = ((uint16_t)b * 255) / m;
+			r = ((uint16_t)r * brightness) / m;
+			g = ((uint16_t)g * brightness) / m;
+			b = ((uint16_t)b * brightness) / m;
 		}
 	};
 
