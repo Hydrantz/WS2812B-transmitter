@@ -47,7 +47,8 @@ namespace WS2812B {
 
 	enum class TickResult {
 		Ok,
-		Finished
+		Finished,
+		Locked
 	};
 
 	struct ColorBuffer {
@@ -104,6 +105,7 @@ namespace WS2812B {
 		/// @param tick_duration_seconds time difference in seconds between each timer interrupt
 		/// @return false if the configuration failed because the tick_duration was to long 
 		bool configure(int pin, float tick_duration_seconds) {
+			lock();
 			uint32_t
 				t_0_L = T0L / tick_duration_seconds,
 				t_0_H = T0H / tick_duration_seconds,
@@ -136,6 +138,7 @@ namespace WS2812B {
 
 			pinMode(pin = pin, OUTPUT);
 
+			unlock();
 			return true;
 		}
 
@@ -144,6 +147,7 @@ namespace WS2812B {
 		/// @returns false if finished transmission 
 		[[nodiscard]]
 		TickResult tick() {
+			if (is_locked()) return TickResult::Locked;
 			if (++tick_counter == ticks_required) {
 				if (!flag_resetting) {
 					if (current_output_level == false) { // finished transmitting the bit
@@ -174,21 +178,27 @@ namespace WS2812B {
 		/// @returns the previous buffer
 		[[nodiscard]]
 		ColorBuffer feed(ColorBuffer &&buffer) {
+			add_lock();
 			auto ret = std::exchange(this->buffer, std::move(buffer));
 			asynch_reset();
+			remove_lock();
 			return std::move(ret);
 		}
 
 		void start() { flag_start = true; }
 
 		void asynch_reset() {
+			add_lock();
 			if (!flag_resetting) {
 				start_reset();
 				if (current_output_level) {
 					tick_counter = -1; // because called asynchronously, must compensate with +1 tick
 				}
 			}
+			remove_lock();
 		}
+
+		[[nodiscard]] bool is_locked() const { return lock_count == 0; }
 
 		auto get_pin_number() const { return pin; }
 
@@ -208,6 +218,9 @@ namespace WS2812B {
 		[[nodiscard]] uint32_t _get_ticks_required_RES() const { return tick_counts[4]; };
 
 	 private: // Private Methods
+
+		void add_lock() { ++lock_count; }
+		void remove_lock() { --lock_count; }
 
 		void start_reset() {
 			flag_resetting = true;
@@ -266,6 +279,7 @@ namespace WS2812B {
 		int pin; // hardware output port
 		ColorBuffer buffer = {nullptr, nullptr}; // TODO default constrcut
 
+		uint8_t lock_count = 0; // if not 0, disables the tick() function to prevent undefined behaviour
 		bool flag_start = false; // if true, when a reset signal is done, will stard sending data
 		bool flag_resetting = false; // true if the transmitting a reset signal
 		bool current_bit_value = false; // the bit currently being transmitted
